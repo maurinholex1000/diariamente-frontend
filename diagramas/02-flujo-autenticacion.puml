@@ -1,0 +1,37 @@
+@startuml Flujo_Autenticacion
+!theme plain
+autonumber
+title CU-01: Autenticación e Identidad (Dual-Role)
+
+actor Usuario
+participant "App Móvil\n(React Native)" as App
+participant "Firebase\nAuthentication" as FBAuth
+participant "Backend\nFastAPI" as Backend
+database "Cloud SQL\n(PostgreSQL)" as DB
+
+Usuario -> App: Abre la aplicación
+App -> Usuario: Selección de rol\n(Paciente / Terapeuta)
+
+Usuario -> App: Ingresa email/contraseña\no presiona "Google Sign-In"
+App -> FBAuth: signInWithEmailAndPassword()\nO AuthRequest OAuth 2.0
+
+alt Credenciales válidas
+    FBAuth --> App: ID Token (JWT RS256)
+    App -> Backend: GET /api/v1/auth/me\nHeader: Bearer <token>
+    Backend -> Backend: verify_id_token()\n(Firebase Admin SDK)
+    Backend -> DB: SELECT * FROM users\nWHERE firebase_uid = ?
+    DB --> Backend: Perfil del usuario
+    Backend --> App: UserResponse { email, role, ... }
+    App -> Usuario: Redirige a Home\n(Paciente o Terapeuta)
+else Credenciales inválidas
+    FBAuth --> App: Error de autenticación
+    App -> Usuario: Mensaje "Credenciales inválidas"
+end
+
+note over Backend, DB
+  Si el usuario existe en Firebase
+  pero NO en Cloud SQL,
+  se auto-registra automáticamente.
+end note
+
+@enduml

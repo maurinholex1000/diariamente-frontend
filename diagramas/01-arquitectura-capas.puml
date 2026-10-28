@@ -1,0 +1,52 @@
+@startuml Arquitectura_Capas
+!theme plain
+skinparam backgroundColor #FAFAFA
+skinparam componentStyle rectangle
+
+title Arquitectura de Bloques Lógicos - DIAriaMENTE
+
+package "1. CAPA DE CLIENTE (React Native)" #E3F2FD {
+    [App Móvil DIAriaMENTE] as App
+    [SQLite Local\n(Cola Offline)] as SQLite
+    [Listener NetInfo\n(Sincronización 4G/WiFi)] as NetInfo
+    [Firebase Auth\n(Login + JWT RS256)] as FirebaseAuth
+}
+
+package "2. CANAL SEGURO" #FFF3E0 {
+    [HTTPS / TLS 1.3\nPayloads AES-256-GCM\nBearer Tokens JWT] as Canal
+}
+
+package "3. CAPA DE SERVICIO (FastAPI Backend)" #E8F5E9 {
+    [FastAPI Framework\nREST API] as API
+    [Firebase Admin SDK\nValidación de Tokens] as AdminSDK
+    [Microservicio NLP\nRoBERTuito] as NLP
+    [Compilador Reportes PDF\n(ReportLab)] as PDF
+}
+
+package "4. CAPA DE DATOS (Google Cloud)" #F3E5F5 {
+    database "Cloud SQL\nPostgreSQL 15" as CloudSQL
+    [Cloud KMS\nCifrado AES-256] as KMS
+}
+
+package "5. SERVICIOS EXTERNOS (Google)" #FFEBEE {
+    [Firebase Cloud Messaging\n(FCM)] as FCM
+}
+
+App --> SQLite
+App --> NetInfo
+App --> FirebaseAuth
+App --> Canal
+Canal --> API
+API --> AdminSDK
+API --> NLP
+API --> PDF
+API --> CloudSQL
+CloudSQL --> KMS
+API --> FCM
+
+note right of CloudSQL
+  Cifrado transparente en reposo (TDE)
+  basado en AES-256
+end note
+
+@enduml

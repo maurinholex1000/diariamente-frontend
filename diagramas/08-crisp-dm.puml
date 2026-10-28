@@ -1,0 +1,36 @@
+@startuml CRISP_DM
+!theme plain
+title Metodología CRISP-DM aplicada a DIAriaMENTE
+
+rectangle "1. Comprensión\ndel Problema" as F1 #BBDEFB
+rectangle "2. Comprensión\nde los Datos" as F2 #C5E1A5
+rectangle "3. Preparación\nde los Datos" as F3 #FFF9C4
+rectangle "4. Modelado\nde IA" as F4 #FFCCBC
+rectangle "5. Evaluación\nExperimental" as F5 #D1C4E9
+rectangle "6. Despliegue\ndel Prototipo" as F6 #B2DFDB
+
+F1 --> F2
+F2 --> F3
+F3 --> F4
+F4 --> F5
+F5 --> F6
+
+F5 ..> F1 : Iteración de mejora
+F6 ..> F2 : Feedback
+
+note right of F1
+  - Objetivos TCC
+  - Alcance del prototipo
+end note
+
+note right of F3
+  - Tokenización
+  - Anonimización UUID/ID
+end note
+
+note right of F5
+  - Matriz de confusión
+  - SUS (usabilidad)
+end note
+
+@enduml

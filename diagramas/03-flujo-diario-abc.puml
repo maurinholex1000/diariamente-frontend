@@ -1,0 +1,44 @@
+@startuml Flujo_Diario_ABC
+!theme plain
+autonumber
+title CU-03: Registro de Pensamiento Automático (Modelo ABC)
+
+actor Paciente
+participant "App Móvil\n(React Native)" as App
+participant "Backend\nFastAPI" as Backend
+participant "Motor NLP\nRoBERTuito" as NLP
+database "Cloud SQL\n(PostgreSQL)" as DB
+
+Paciente -> App: "Nuevo Registro"
+Paciente -> App: Ingresa A (Situación)\ny B (Pensamiento)
+Paciente -> App: Presiona "Analizar con IA"
+
+App -> Backend: POST /api/v1/ai/analyze\n{ text: "..." }
+Backend -> Backend: Pipeline de preprocesamiento\n(limpieza, anonimización, tokenización)
+Backend -> NLP: Inferencia semántica
+NLP --> Backend: Emoción + Distorsión\n+ Pregunta socrática
+Backend --> App: AnalyzeResponse
+App --> Paciente: Tarjeta psicoeducativa\n(emoción + distorsión + pregunta)
+
+Paciente -> App: Completa C (Emoción)\ny presiona "Guardar"
+App -> App: Guarda en SQLite local\n(synced = false)
+
+alt Con conexión a internet
+    App -> Backend: POST /api/v1/diary/entries
+    Backend -> Backend: Verifica Score_Riesgo
+    Backend -> DB: INSERT INTO diary_entries
+    DB --> Backend: id = 1
+    Backend --> App: DiaryEntryResponse (201)
+    App -> App: Marca SQLite como synced = true
+else Sin conexión (Modo Offline)
+    App -> App: Encola en AsyncStorage
+    note right of App
+      NetInfo detectará
+      restablecimiento de red
+      y sincronizará en lote.
+    end note
+end
+
+App --> Paciente: "Registro guardado correctamente"
+
+@enduml

@@ -1,0 +1,30 @@
+@startuml Pipeline_NLP
+!theme plain
+title Pipeline de Preprocesamiento NLP
+
+start
+:TEXTO CRUDO\n(ingresado por el usuario);
+
+:1. Detección de idioma\n(langdetect → es);
+if (¿Idioma válido?) then (sí)
+else (no)
+    :Descartar input;
+    stop
+endif
+
+:2. Eliminación de ruido\n(Regex: URLs, HTML, emojis);
+
+:3. Normalización\n(lowercase, unidecode);
+
+:4. Anonimización\n(DNI, teléfonos, nombres → [REDACTED]);
+
+:5. Tokenización BPE\n(RoBERTuito tokenizer);
+
+:6. Generación de embeddings\n(tensores numéricos);
+
+:7. Inferencia RoBERTuito\n(emoción + distorsión);
+
+:8. Persistencia disociada\n(UUID/ID + análisis);
+
+stop
+@enduml

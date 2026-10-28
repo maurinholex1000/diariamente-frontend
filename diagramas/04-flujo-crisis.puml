@@ -1,0 +1,40 @@
+@startuml Flujo_Crisis
+!theme plain
+autonumber
+title CU-04: Emisión de Alerta Temprana de Crisis (Riesgo Vital)
+
+actor Paciente
+participant "App Móvil\n(Paciente)" as AppP
+participant "Backend\nFastAPI" as Backend
+participant "Motor NLP\nClasificador Híbrido" as NLP
+database "Cloud SQL" as DB
+participant "FCM\n(Firebase Cloud\nMessaging)" as FCM
+participant "App Móvil\n(Terapeuta)" as AppT
+
+Paciente -> AppP: Guarda pensamiento ABC
+AppP -> Backend: POST /api/v1/diary/entries
+
+Backend -> NLP: calculate_risk_score(text)
+activate NLP
+NLP -> NLP: IA: emoción + sentimiento
+NLP -> NLP: Reglas: crisis + desesperanza
+NLP -> NLP: final_score = IA + Reglas
+NLP --> Backend: (score, flag, reason)
+deactivate NLP
+
+alt Score_Riesgo >= 0.85 o crisis directa
+    Backend -> DB: UPDATE diary_entries\nSET flag_riesgo_suicida = TRUE
+    Backend -> FCM: send_fcm_notification()\n(priority: max)
+    FCM -> AppT: 🔔 Notificación Push\n"ALERTA DE CRISIS - Paciente X"
+    FCM -> AppP: 💙 Mensaje de apoyo
+    Backend --> AppP: 201 Created
+    AppP -> Paciente: Pantalla de contención\n(líneas 0800-999-0091 / 135)
+    AppT -> Backend: GET /api/v1/therapist/crisis-alert/{id}
+    Backend --> AppT: Detalle completo + Score
+else Score_Riesgo < 0.85
+    Backend -> DB: INSERT INTO diary_entries
+    Backend --> AppP: 201 Created
+    AppP -> Paciente: "Registro guardado"
+end
+
+@enduml

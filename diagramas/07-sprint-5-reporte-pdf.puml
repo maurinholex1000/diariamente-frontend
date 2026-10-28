@@ -1,0 +1,39 @@
+@startuml Flujo_Reporte_PDF
+!theme plain
+autonumber
+title CU-05: Consulta y Compilación de Reporte Clínico PDF
+
+actor Terapeuta
+participant "App Terapeuta" as AppT
+actor Paciente
+participant "App Paciente" as AppP
+participant "Backend\nFastAPI" as Backend
+database "Cloud SQL" as DB
+participant "ReportLab" as ReportLab
+
+Terapeuta -> AppT: Solicita reporte\n(paciente + rango fechas)
+AppT -> Backend: POST /api/v1/consent/request
+Backend -> DB: INSERT INTO consent_requests\n(status='pending')
+Backend -> AppP: FCM Push\n"Nueva solicitud de reporte"
+
+Paciente -> AppP: Abre "Solicitudes"
+AppP -> Backend: GET /api/v1/consent/requests
+Backend --> AppP: Lista de solicitudes
+Paciente -> AppP: Presiona "Aceptar"
+
+AppP -> Backend: POST /api/v1/consent/respond/{id}\n{ accept: true }
+Backend -> DB: UPDATE status='accepted'
+
+Backend -> DB: SELECT * FROM diary_entries\nWHERE period BETWEEN ...
+DB --> Backend: Lista de registros
+Backend -> ReportLab: generate_pdf(report_data)
+ReportLab --> Backend: PDF bytes
+Backend -> Backend: Guarda PDF en /reports/
+Backend -> AppT: FCM Push\n"Reporte listo para descargar"
+
+Terapeuta -> AppT: Presiona "Descargar PDF"
+AppT -> Backend: GET /api/v1/therapist/download-report/{id}
+Backend --> AppT: application/pdf
+AppT -> Terapeuta: Compartir / Guardar PDF
+
+@enduml

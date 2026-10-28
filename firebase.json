@@ -1,0 +1,7 @@
+{
+  "react-native": {
+    "messaging_android_notification_channel_id": "diariamente-crisis",
+    "messaging_android_notification_color": "@color/crisis_red",
+    "analytics_auto_collection_enabled": false
+  }
+}

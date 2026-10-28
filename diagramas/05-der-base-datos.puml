@@ -1,0 +1,74 @@
+@startuml DER_Base_Datos
+!theme plain
+title Modelo Entidad-Relación - DIAriaMENTE
+
+entity "users" as users {
+    * id : INTEGER <<PK>>
+    --
+    firebase_uid : VARCHAR (unique)
+    email : VARCHAR (unique)
+    username : VARCHAR
+    role : VARCHAR
+    license_number : VARCHAR (nullable)
+    therapist_id : INTEGER (FK → users.id)
+    fcm_token : VARCHAR (nullable)
+    is_active : BOOLEAN
+    created_at : TIMESTAMP
+}
+
+entity "diary_entries" as diary {
+    * id : INTEGER <<PK>>
+    --
+    user_id : INTEGER <<FK → users.id>>
+    antecedent : TEXT (A)
+    belief : TEXT (B)
+    consequence : TEXT (C)
+    user_emotion : VARCHAR
+    detected_emotion : VARCHAR
+    detected_distortion : VARCHAR
+    confidence_score : FLOAT
+    risk_score : FLOAT
+    flag_riesgo_suicida : BOOLEAN
+    crisis_notified : BOOLEAN
+    created_at : TIMESTAMP
+}
+
+entity "consent_requests" as consents {
+    * id : INTEGER <<PK>>
+    --
+    therapist_id : INTEGER <<FK → users.id>>
+    patient_id : INTEGER <<FK → users.id>>
+    start_date : TIMESTAMP
+    end_date : TIMESTAMP
+    status : VARCHAR (pending|accepted|rejected)
+    pdf_path : VARCHAR (nullable)
+    report_generated_at : TIMESTAMP
+    created_at : TIMESTAMP
+}
+
+entity "therapist_patients" as tp {
+    * id : INTEGER <<PK>>
+    --
+    therapist_id : INTEGER <<FK → users.id>>
+    patient_id : INTEGER <<FK → users.id>>
+    created_at : TIMESTAMP
+}
+
+entity "user_consents" as uc {
+    * id : INTEGER <<PK>>
+    --
+    user_id : INTEGER <<FK → users.id>> (unique)
+    version : VARCHAR
+    accepted : BOOLEAN
+    accepted_at : TIMESTAMP
+    ip_address : VARCHAR
+    created_at : TIMESTAMP
+}
+
+users ||--o{ diary : "1:N"
+users ||--o{ consents : "1:N (therapist)"
+users ||--o{ consents : "1:N (patient)"
+users ||--o{ tp : "1:N"
+users ||--|| uc : "1:1"
+
+@enduml
