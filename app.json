@@ -2,6 +2,7 @@
   "expo": {
     "name": "DiariamenteApp",
     "slug": "DiariamenteApp",
+    "scheme": ["diariamente", "com.diariamenteapp"],
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -42,6 +43,11 @@
           "color": "#E53935"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "65dd1311-1bd0-4de2-a64c-0e8562d2ccf9"
+      }
+    }
   }
 }

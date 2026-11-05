@@ -7,5 +7,5 @@ export const GOOGLE_CONFIG = {
 };
 
 export const redirectUri = makeRedirectUri({
-  scheme: 'diariamente',
+  native: 'com.diariamenteapp:/oauthredirect',
 });
