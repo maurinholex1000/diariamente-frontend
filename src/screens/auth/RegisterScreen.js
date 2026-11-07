@@ -47,7 +47,20 @@ export const RegisterScreen = ({ navigation }) => {
       role === 'therapist' ? licenseNumber.trim() : null
     );
     setLoading(false);
-    if (!result.success) Alert.alert('Error', result.error);
+    if (result.success) {
+  Alert.alert(
+    '¡Cuenta creada!',
+    'Te enviamos un correo electrónico para verificar tu cuenta. Revisá tu bandeja de entrada y también la carpeta de spam. Una vez verificada, podrás iniciar sesión.',
+    [
+      {
+        text: 'Entendido',
+        onPress: () => navigation.navigate('Login'),
+      },
+    ]
+  );
+} else {
+  Alert.alert('Error', result.error || 'No se pudo crear la cuenta.');
+}
   };
 
   return (

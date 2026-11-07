@@ -46,27 +46,45 @@ function AppNavigator() {
   const { hasConsent, loading: consentLoading } = useConsent();
 
   useEffect(() => {
-    if (isAuthenticated) {
-      const init = async () => {
-        try {
-          await DatabaseService.initDatabase();
-          syncService.setup();
-          const ok = await notificationService.requestPermissions();
-          if (ok) {
-            await notificationService.getExpoPushToken();
-            notificationService.setupListeners(navigationRef);
-          }
-        } catch (error) {
-          console.error('Error inicializando servicios:', error);
-        }
-      };
-      init();
+  if (!isAuthenticated || !hasConsent) {
+    return;
+  }
+
+  let isMounted = true;
+
+  const init = async () => {
+    try {
+      await DatabaseService.initDatabase();
+
+      if (!isMounted) return;
+
+      syncService.setup();
+
+      // Las notificaciones se solicitan únicamente
+      // después de aceptar el consentimiento legal.
+      const permissionGranted =
+        await notificationService.requestPermissions();
+
+      if (!isMounted || !permissionGranted) return;
+
+      await notificationService.getDevicePushToken();
+
+      if (!isMounted) return;
+
+      notificationService.setupListeners(navigationRef);
+    } catch (error) {
+      console.error('Error inicializando servicios:', error);
     }
-    return () => {
-      syncService.stop();
-      notificationService.cleanup();
-    };
-  }, [isAuthenticated]);
+  };
+
+  init();
+
+  return () => {
+    isMounted = false;
+    syncService.stop();
+    notificationService.cleanup();
+  };
+}, [isAuthenticated, hasConsent]);
 
   if (isLoading || (isAuthenticated && consentLoading)) {
     return (
