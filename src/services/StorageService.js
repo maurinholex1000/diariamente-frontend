@@ -25,10 +25,20 @@ export const StorageService = {
     await AsyncStorage.setItem(KEYS.OFFLINE_QUEUE, JSON.stringify(queue));
   },
   async addToOfflineQueue(item) {
-    const queue = await this.getOfflineQueue();
-    queue.push(item);
-    await this.saveOfflineQueue(queue);
-  },
+  const queue = await this.getOfflineQueue();
+
+  const alreadyExists = queue.some(
+    (queuedItem) =>
+      queuedItem.owner_uid === item.owner_uid &&
+      queuedItem.localId === item.localId
+  );
+
+  if (alreadyExists) {
+    return;
+  }
+  queue.push(item);
+  await this.saveOfflineQueue(queue);
+},
   async removeFromOfflineQueue(id) {
     const queue = await this.getOfflineQueue();
     await this.saveOfflineQueue(queue.filter((item) => item.id !== id));

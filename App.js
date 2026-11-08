@@ -1,11 +1,21 @@
-import React, { useEffect, useRef } from 'react';
-import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
+
+import React, { useEffect } from 'react';
+import {
+  NavigationContainer,
+  createNavigationContainerRef,
+} from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
-import { ActivityIndicator, View, Text } from 'react-native';
+import {
+  ActivityIndicator,
+  View,
+  Text,
+} from 'react-native';
 import { Provider as ReduxProvider } from 'react-redux';
+
 import { store } from './src/store';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { ConsentProvider, useConsent } from './src/context/ConsentContext';
+
 import { DatabaseService } from './src/services/DatabaseService';
 import { syncService } from './src/services/SyncService';
 import { notificationService } from './src/services/NotificationService';
@@ -38,57 +48,72 @@ import { ConsentScreen } from './src/screens/shared/ConsentScreen';
 
 const Stack = createStackNavigator();
 
-// ✅ Ref creada FUERA del componente (patrón recomendado por React Navigation)
 const navigationRef = createNavigationContainerRef();
 
 function AppNavigator() {
-  const { isLoading, isAuthenticated, userRole } = useAuth();
-  const { hasConsent, loading: consentLoading } = useConsent();
+  const {
+    isLoading,
+    isAuthenticated,
+    userRole,
+    user,
+  } = useAuth();
+
+  const {
+    hasConsent,
+    loading: consentLoading,
+  } = useConsent();
 
   useEffect(() => {
-  if (!isAuthenticated || !hasConsent) {
-    return;
-  }
-
-  let isMounted = true;
-
-  const init = async () => {
-    try {
-      await DatabaseService.initDatabase();
-
-      if (!isMounted) return;
-
-      syncService.setup();
-
-      // Las notificaciones se solicitan únicamente
-      // después de aceptar el consentimiento legal.
-      const permissionGranted =
-        await notificationService.requestPermissions();
-
-      if (!isMounted || !permissionGranted) return;
-
-      await notificationService.getDevicePushToken();
-
-      if (!isMounted) return;
-
-      notificationService.setupListeners(navigationRef);
-    } catch (error) {
-      console.error('Error inicializando servicios:', error);
+    if (!isAuthenticated || !hasConsent || !user?.uid) {
+      return;
     }
-  };
 
-  init();
+    let isMounted = true;
 
-  return () => {
-    isMounted = false;
-    syncService.stop();
-    notificationService.cleanup();
-  };
-}, [isAuthenticated, hasConsent]);
+    const init = async () => {
+      try {
+        await DatabaseService.initDatabase();
+
+        if (!isMounted) return;
+
+        // Inicializar sincronización para el usuario autenticado.
+        syncService.setup(user.uid);
+
+        // Las notificaciones se solicitan únicamente
+        // después de aceptar el consentimiento legal.
+        const permissionGranted =
+          await notificationService.requestPermissions();
+
+        if (!isMounted || !permissionGranted) return;
+
+        await notificationService.getDevicePushToken();
+
+        if (!isMounted) return;
+
+        notificationService.setupListeners(navigationRef);
+      } catch (error) {
+        console.error('Error inicializando servicios:', error);
+      }
+    };
+
+    init();
+
+    return () => {
+      isMounted = false;
+      syncService.stop();
+      notificationService.cleanup();
+    };
+  }, [isAuthenticated, hasConsent, user?.uid]);
 
   if (isLoading || (isAuthenticated && consentLoading)) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+        }}
+      >
         <ActivityIndicator size="large" color="#4A90E2" />
         <Text style={{ marginTop: 15 }}>Cargando...</Text>
       </View>
@@ -116,13 +141,51 @@ function AppNavigator() {
             headerTitleStyle: { fontWeight: 'bold' },
           }}
         >
-          <Stack.Screen name="PatientHome" component={PatientHomeScreen} options={{ title: 'DIAriaMENTE' }} />
-          <Stack.Screen name="DiaryEntry" component={DiaryEntryScreen} options={{ title: 'Diario ABC' }} />
-          <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'Mis Pensamientos' }} />
-          <Stack.Screen name="EntryDetail" component={EntryDetailScreen} options={{ title: 'Detalle' }} />
-          <Stack.Screen name="ConsentRequests" component={ConsentRequestsScreen} options={{ title: 'Solicitudes' }} />
-          <Stack.Screen name="CrisisAlert" component={CrisisAlertScreen} options={{ title: '⚠️ Alerta de Seguridad', headerStyle: { backgroundColor: '#E53935' }, headerTintColor: '#FFF' }} />
-          <Stack.Screen name="PrivacySettings" component={PrivacySettingsScreen} options={{ title: 'Privacidad' }} />
+          <Stack.Screen
+            name="PatientHome"
+            component={PatientHomeScreen}
+            options={{ title: 'DIAriaMENTE' }}
+          />
+
+          <Stack.Screen
+            name="DiaryEntry"
+            component={DiaryEntryScreen}
+            options={{ title: 'Diario ABC' }}
+          />
+
+          <Stack.Screen
+            name="History"
+            component={HistoryScreen}
+            options={{ title: 'Mis Pensamientos' }}
+          />
+
+          <Stack.Screen
+            name="EntryDetail"
+            component={EntryDetailScreen}
+            options={{ title: 'Detalle' }}
+          />
+
+          <Stack.Screen
+            name="ConsentRequests"
+            component={ConsentRequestsScreen}
+            options={{ title: 'Solicitudes' }}
+          />
+
+          <Stack.Screen
+            name="CrisisAlert"
+            component={CrisisAlertScreen}
+            options={{
+              title: '⚠️ Alerta de Seguridad',
+              headerStyle: { backgroundColor: '#E53935' },
+              headerTintColor: '#FFF',
+            }}
+          />
+
+          <Stack.Screen
+            name="PrivacySettings"
+            component={PrivacySettingsScreen}
+            options={{ title: 'Privacidad' }}
+          />
         </Stack.Navigator>
       ) : (
         <Stack.Navigator
@@ -132,13 +195,51 @@ function AppNavigator() {
             headerTitleStyle: { fontWeight: 'bold' },
           }}
         >
-          <Stack.Screen name="TherapistHome" component={TherapistHomeScreen} options={{ title: 'DIAriaMENTE' }} />
-          <Stack.Screen name="PatientList" component={PatientListScreen} options={{ title: 'Mis Pacientes' }} />
-          <Stack.Screen name="LinkPatient" component={LinkPatientScreen} options={{ title: 'Vincular Paciente' }} />
-          <Stack.Screen name="RequestReport" component={RequestReportScreen} options={{ title: 'Solicitar Reporte' }} />
-          <Stack.Screen name="ReportsList" component={ReportsListScreen} options={{ title: 'Reportes' }} />
-          <Stack.Screen name="CrisisAlertDetail" component={CrisisAlertDetailScreen} options={{ title: '🚨 Detalle de Alerta', headerStyle: { backgroundColor: '#E53935' }, headerTintColor: '#FFF' }} />
-          <Stack.Screen name="PrivacySettings" component={PrivacySettingsScreen} options={{ title: 'Privacidad' }} />
+          <Stack.Screen
+            name="TherapistHome"
+            component={TherapistHomeScreen}
+            options={{ title: 'DIAriaMENTE' }}
+          />
+
+          <Stack.Screen
+            name="PatientList"
+            component={PatientListScreen}
+            options={{ title: 'Mis Pacientes' }}
+          />
+
+          <Stack.Screen
+            name="LinkPatient"
+            component={LinkPatientScreen}
+            options={{ title: 'Vincular Paciente' }}
+          />
+
+          <Stack.Screen
+            name="RequestReport"
+            component={RequestReportScreen}
+            options={{ title: 'Solicitar Reporte' }}
+          />
+
+          <Stack.Screen
+            name="ReportsList"
+            component={ReportsListScreen}
+            options={{ title: 'Reportes' }}
+          />
+
+          <Stack.Screen
+            name="CrisisAlertDetail"
+            component={CrisisAlertDetailScreen}
+            options={{
+              title: '🚨 Detalle de Alerta',
+              headerStyle: { backgroundColor: '#E53935' },
+              headerTintColor: '#FFF',
+            }}
+          />
+
+          <Stack.Screen
+            name="PrivacySettings"
+            component={PrivacySettingsScreen}
+            options={{ title: 'Privacidad' }}
+          />
         </Stack.Navigator>
       )}
     </NavigationContainer>
