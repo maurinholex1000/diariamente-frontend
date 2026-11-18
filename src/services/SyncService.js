@@ -2,7 +2,13 @@
 import NetInfo from '@react-native-community/netinfo';
 
 import { store } from '../store';
-import { setOffline, setOnline, syncEntries } from '../store/actions';
+import {
+  setOffline,
+  setOnline,
+  syncEntries,
+  syncEntriesSuccess,
+  syncEntriesFailure,
+} from '../store/actions';
 import { processOfflineQueue } from '../store/middleware/offlineMiddleware';
 import { DatabaseService } from './DatabaseService';
 import { ApiService } from './ApiService';
@@ -15,6 +21,8 @@ class SyncService {
     this.syncInterval = null;
     this.unsubscribeNetInfo = null;
     this.ownerUid = null;
+    this.runId = 0;
+    this.pendingOwnerUid = null;
   }
 
   setup(ownerUid = auth.currentUser?.uid) {
@@ -23,12 +31,10 @@ class SyncService {
       return;
     }
 
-    // Si ya está configurado para la misma cuenta, no duplicar listeners.
     if (this.isListening && this.ownerUid === ownerUid) {
       return;
     }
 
-    // Si cambió la cuenta, detener los listeners anteriores.
     if (this.isListening) {
       this.stop();
     }
@@ -55,12 +61,24 @@ class SyncService {
       this.triggerSync(this.ownerUid);
     }, 5 * 60 * 1000);
 
-    // Sincronización inicial.
-    this.triggerSync(this.ownerUid);
+    this.triggerSync(ownerUid);
+  }
+
+  isCurrentRun(ownerUid, runId) {
+    return (
+      this.ownerUid === ownerUid &&
+      auth.currentUser?.uid === ownerUid &&
+      this.runId === runId
+    );
   }
 
   async triggerSync(ownerUid = this.ownerUid) {
-    if (!ownerUid || this.isSyncing) return;
+    if (!ownerUid) return;
+
+    if (this.isSyncing) {
+      this.pendingOwnerUid = ownerUid;
+      return;
+    }
 
     if (auth.currentUser?.uid !== ownerUid) {
       console.warn('⚠️ Sincronización cancelada: cambió el usuario.');
@@ -69,8 +87,14 @@ class SyncService {
 
     this.isSyncing = true;
 
+    const currentRunId = this.runId;
+
+    store.dispatch(syncEntries());
+
     try {
       const networkState = await NetInfo.fetch();
+
+      if (!this.isCurrentRun(ownerUid, currentRunId)) return;
 
       const isConnected =
         networkState.isConnected === true &&
@@ -78,7 +102,7 @@ class SyncService {
 
       if (!isConnected) {
         store.dispatch(setOffline());
-        return;
+        throw new Error('No hay conexión disponible.');
       }
 
       store.dispatch(setOnline());
@@ -86,29 +110,59 @@ class SyncService {
       // 1. Procesar primero la cola offline.
       await processOfflineQueue(store, ownerUid);
 
-      if (auth.currentUser?.uid !== ownerUid) return;
+      if (!this.isCurrentRun(ownerUid, currentRunId)) return;
 
-      // 2. Sincronizar registros pendientes que no estén en la cola.
+      // 2. Sincronizar registros pendientes.
       await this.syncPendingEntries(ownerUid);
 
-      if (auth.currentUser?.uid !== ownerUid) return;
+      if (!this.isCurrentRun(ownerUid, currentRunId)) return;
 
-      // 3. Descargar registros del backend e incorporarlos a SQLite.
-      await this.downloadRemoteEntries(ownerUid);
+      // 3. Descargar registros remotos e incorporarlos a SQLite.
+      const downloaded = await this.downloadRemoteEntries(
+        ownerUid,
+        currentRunId
+      );
 
-      if (auth.currentUser?.uid !== ownerUid) return;
+      if (!downloaded) {
+        throw new Error('No se pudieron descargar los pensamientos.');
+      }
 
-      store.dispatch(syncEntries());
+      if (!this.isCurrentRun(ownerUid, currentRunId)) return;
 
-      console.log('✅ Sincronización finalizada para:', ownerUid);
+      // 4. Leer SQLite después de completar la descarga.
+      const entries = await DatabaseService.getAllEntries(ownerUid);
+
+      if (!this.isCurrentRun(ownerUid, currentRunId)) return;
+
+      // 5. Publicar los datos actualizados en Redux.
+      store.dispatch(syncEntriesSuccess(entries));
+
+      console.log(
+        `✅ Sincronización finalizada. Registros locales: ${entries.length}`
+      );
     } catch (error) {
-      console.error('❌ Error en sincronización:', error);
+      if (this.isCurrentRun(ownerUid, currentRunId)) {
+        store.dispatch(syncEntriesFailure(error?.message || error));
+        console.error('❌ Error en sincronización:', error);
+      }
     } finally {
       this.isSyncing = false;
+
+      const nextOwnerUid = this.pendingOwnerUid;
+      this.pendingOwnerUid = null;
+
+      // Si hubo un cambio de cuenta durante la sincronización,
+      // iniciar la sincronización pendiente de la cuenta actual.
+      if (
+        nextOwnerUid &&
+        nextOwnerUid === this.ownerUid &&
+        auth.currentUser?.uid === nextOwnerUid
+      ) {
+        this.triggerSync(nextOwnerUid);
+      }
     }
   }
 
-  // Convierte un registro SQLite al formato esperado por el backend.
   prepareEntryForApi(entry) {
     return {
       antecedent: entry.antecedent ?? null,
@@ -129,7 +183,6 @@ class SyncService {
 
       const queue = await this.getOfflineQueueForUser(ownerUid);
 
-      // Evitar que un registro presente en la cola se envíe dos veces.
       const queuedLocalIds = new Set(
         queue
           .map((item) => Number(item.localId))
@@ -140,15 +193,26 @@ class SyncService {
         await DatabaseService.getUnsyncedEntries(ownerUid);
 
       for (const entry of unsyncedEntries) {
-        if (auth.currentUser?.uid !== ownerUid) break;
+        if (
+          auth.currentUser?.uid !== ownerUid ||
+          this.ownerUid !== ownerUid
+        ) {
+          break;
+        }
 
-        // Este registro ya será procesado por processOfflineQueue.
         if (queuedLocalIds.has(Number(entry.id))) continue;
 
         try {
           const result = await ApiService.saveDiaryEntry(
             this.prepareEntryForApi(entry)
           );
+
+          if (
+            auth.currentUser?.uid !== ownerUid ||
+            this.ownerUid !== ownerUid
+          ) {
+            break;
+          }
 
           if (!result?.id) {
             throw new Error(
@@ -181,24 +245,22 @@ class SyncService {
     const { StorageService } = await import('./StorageService');
     const queue = await StorageService.getOfflineQueue();
 
-    return queue.filter(
-      (item) => item.owner_uid === ownerUid
-    );
+    return queue.filter((item) => item.owner_uid === ownerUid);
   }
 
-  async downloadRemoteEntries(ownerUid) {
+  async downloadRemoteEntries(ownerUid, runId) {
     try {
-      if (auth.currentUser?.uid !== ownerUid) return;
+      if (!this.isCurrentRun(ownerUid, runId)) return false;
 
       const remoteEntries = await ApiService.getDiaryEntries();
 
-      if (auth.currentUser?.uid !== ownerUid) return;
+      if (!this.isCurrentRun(ownerUid, runId)) return false;
 
       if (!Array.isArray(remoteEntries)) {
         console.warn(
           '⚠️ El backend no devolvió una lista de pensamientos.'
         );
-        return;
+        return false;
       }
 
       const result = await DatabaseService.upsertRemoteEntries(
@@ -206,19 +268,29 @@ class SyncService {
         ownerUid
       );
 
+      if (!this.isCurrentRun(ownerUid, runId)) return false;
+
       console.log(
         `⬇️ Pensamientos descargados: ${result.imported}; actualizados: ${result.updated}`
       );
+
+      return true;
     } catch (error) {
       console.error(
         '❌ Error descargando pensamientos del backend:',
         error.message
       );
+
+      return false;
     }
   }
 
   stop() {
     this.isListening = false;
+
+    // Invalida cualquier sincronización que estuviera en curso.
+    this.runId += 1;
+    this.pendingOwnerUid = null;
 
     if (this.unsubscribeNetInfo) {
       this.unsubscribeNetInfo();

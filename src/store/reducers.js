@@ -1,3 +1,4 @@
+
 import { combineReducers } from '@reduxjs/toolkit';
 import { actionTypes } from './actions';
 
@@ -5,8 +6,10 @@ const entriesReducer = (state = [], action) => {
   switch (action.type) {
     case actionTypes.ADD_ENTRY_SUCCESS:
       return [...state, { ...action.payload, synced: true }];
+
     case actionTypes.SYNC_ENTRIES_SUCCESS:
-      return action.payload;
+      return Array.isArray(action.payload) ? action.payload : state;
+
     default:
       return state;
   }
@@ -24,10 +27,15 @@ const offlineQueueReducer = (state = [], action) => {
           retries: 0,
         },
       ];
+
     case actionTypes.ADD_ENTRY_SUCCESS:
-      return state.filter((item) => item.id !== action.payload.offlineId);
-    case actionTypes.SYNC_ENTRIES_SUCCESS:
-      return [];
+      return state.filter(
+        (item) => item.id !== action.payload.offlineId
+      );
+
+    // No vaciar toda la cola al completar una sincronización.
+    // Cada elemento debe eliminarse cuando realmente se procese.
+
     default:
       return state;
   }
@@ -37,21 +45,36 @@ const connectionReducer = (state = { isOffline: false }, action) => {
   switch (action.type) {
     case actionTypes.SET_OFFLINE:
       return { ...state, isOffline: true };
+
     case actionTypes.SET_ONLINE:
       return { ...state, isOffline: false };
+
     default:
       return state;
   }
 };
 
-const syncReducer = (state = { isSyncing: false, lastSync: null }, action) => {
+const syncReducer = (
+  state = { isSyncing: false, lastSync: null },
+  action
+) => {
   switch (action.type) {
     case actionTypes.SYNC_ENTRIES:
       return { ...state, isSyncing: true };
+
     case actionTypes.SYNC_ENTRIES_SUCCESS:
-      return { ...state, isSyncing: false, lastSync: new Date() };
+      return {
+        ...state,
+        isSyncing: false,
+        lastSync: new Date().toISOString(),
+      };
+
     case actionTypes.SYNC_ENTRIES_FAILURE:
-      return { ...state, isSyncing: false };
+      return {
+        ...state,
+        isSyncing: false,
+      };
+
     default:
       return state;
   }
@@ -62,8 +85,13 @@ const crisisReducer = (state = [], action) => {
     case actionTypes.CRISIS_DETECTED:
       return [
         ...state,
-        { ...action.payload, timestamp: new Date().toISOString(), notified: false },
+        {
+          ...action.payload,
+          timestamp: new Date().toISOString(),
+          notified: false,
+        },
       ];
+
     default:
       return state;
   }

@@ -1,7 +1,14 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
 } from 'react-native';
+import { useSelector } from 'react-redux';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useAuth } from '../../context/AuthContext';
 import { DatabaseService } from '../../services/DatabaseService';
@@ -10,12 +17,18 @@ import { CrisisBanner } from '../../components/CrisisBanner';
 export const PatientHomeScreen = ({ navigation }) => {
   const { user, backendUser } = useAuth();
 
+  const lastSync = useSelector((state) => state.sync?.lastSync);
+
   const [recentEntries, setRecentEntries] = useState([]);
   const [pendingCrisis, setPendingCrisis] = useState(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ total: 0, thisWeek: 0 });
 
-  const loadData = useCallback(async () => {
+  const loadRequestRef = useRef(0);
+
+  const loadData = useCallback(async (showLoading = false) => {
+    const requestId = ++loadRequestRef.current;
+
     if (!user?.uid) {
       setRecentEntries([]);
       setPendingCrisis(null);
@@ -24,19 +37,28 @@ export const PatientHomeScreen = ({ navigation }) => {
       return;
     }
 
-    setLoading(true);
+    if (showLoading) {
+      setLoading(true);
+    }
 
     try {
       const entries = await DatabaseService.getAllEntries(user.uid);
 
-      console.log('📊 Entradas locales del usuario cargadas:', entries.length);
+      // Ignorar respuestas de consultas anteriores.
+      if (requestId !== loadRequestRef.current) return;
+
+      console.log(
+        '📊 Entradas locales del usuario cargadas:',
+        entries.length
+      );
 
       setRecentEntries(entries.slice(0, 3));
 
       const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
       const thisWeek = entries.filter(
-        (e) => new Date(e.created_at).getTime() > oneWeekAgo
+        (entry) =>
+          new Date(entry.created_at).getTime() > oneWeekAgo
       ).length;
 
       setStats({
@@ -45,24 +67,39 @@ export const PatientHomeScreen = ({ navigation }) => {
       });
 
       const crisis = entries.find(
-        (e) => e.flag_riesgo_suicida && !e.crisis_notified
+        (entry) =>
+          entry.flag_riesgo_suicida && !entry.crisis_notified
       );
 
       setPendingCrisis(crisis || null);
     } catch (error) {
-      console.error('Error cargando datos:', error);
+      if (requestId === loadRequestRef.current) {
+        console.error('Error cargando datos:', error);
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, [user?.uid]);
 
+  // Carga inicial y actualización al volver a Home.
   useEffect(() => {
-    loadData();
+    loadData(true);
 
-    const unsubscribe = navigation.addListener('focus', loadData);
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadData(false);
+    });
 
     return unsubscribe;
   }, [navigation, loadData]);
+
+  // Actualizar Home cuando termina una sincronización exitosa.
+  useEffect(() => {
+    if (lastSync) {
+      loadData(false);
+    }
+  }, [lastSync, loadData]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -108,9 +145,9 @@ export const PatientHomeScreen = ({ navigation }) => {
       'Diciembre',
     ];
 
-    const d = new Date();
+    const date = new Date();
 
-    return `${days[d.getDay()]}, ${d.getDate()} de ${months[d.getMonth()]}`;
+    return `${days[date.getDay()]}, ${date.getDate()} de ${months[date.getMonth()]}`;
   };
 
   if (loading) {
