@@ -1,5 +1,6 @@
 
 import * as SQLite from 'expo-sqlite';
+import { DiaryDebugService } from './DiaryDebugService';
 
 let db = null;
 let initPromise = null;
@@ -29,7 +30,6 @@ async function getDb() {
       );
     `);
 
-    // Migración segura: agrega columnas sin borrar registros existentes.
     const columns = await db.getAllAsync(
       'PRAGMA table_info(diary_entries);'
     );
@@ -60,6 +60,8 @@ async function getDb() {
       ON diary_entries(owner_uid, created_at);
     `);
 
+    DiaryDebugService.info('sqlite.initialized');
+
     return db;
   })();
 
@@ -68,73 +70,109 @@ async function getDb() {
   } catch (error) {
     db = null;
     initPromise = null;
+
+    DiaryDebugService.error(
+      'sqlite.initialization.failed',
+      error
+    );
+
     throw error;
   }
 }
 
 function requireOwner(ownerUid) {
   if (!ownerUid || typeof ownerUid !== 'string') {
-    throw new Error('Se requiere un UID de Firebase para acceder al diario.');
+    throw new Error(
+      'Se requiere un UID de Firebase para acceder al diario.'
+    );
   }
 }
 
 export const DatabaseService = {
   async initDatabase() {
     await getDb();
-    console.log('✅ Base de datos local inicializada');
+    DiaryDebugService.info('sqlite.ready');
   },
 
   async saveEntryLocally(entry) {
     requireOwner(entry.owner_uid);
 
-    const database = await getDb();
+    DiaryDebugService.info('sqlite.save.started', {
+      clientId: entry.id || null,
+    });
 
-    const result = await database.runAsync(
-      `INSERT INTO diary_entries (
-        antecedent,
-        belief,
-        consequence,
-        user_emotion,
-        detected_emotion,
-        detected_distortion,
-        confidence_score,
-        risk_score,
-        flag_riesgo_suicida,
-        synced,
-        owner_uid
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?);`,
-      [
-        entry.antecedent || null,
-        entry.belief || null,
-        entry.consequence || null,
-        entry.user_emotion || null,
-        entry.detected_emotion || null,
-        entry.detected_distortion || null,
-        entry.confidence_score ?? null,
-        entry.risk_score ?? null,
-        entry.flag_riesgo_suicida ? 1 : 0,
-        entry.owner_uid,
-      ]
-    );
+    try {
+      const database = await getDb();
 
-    return result.lastInsertRowId;
+      const result = await database.runAsync(
+        `INSERT INTO diary_entries (
+          antecedent,
+          belief,
+          consequence,
+          user_emotion,
+          detected_emotion,
+          detected_distortion,
+          confidence_score,
+          risk_score,
+          flag_riesgo_suicida,
+          synced,
+          owner_uid
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?);`,
+        [
+          entry.antecedent || null,
+          entry.belief || null,
+          entry.consequence || null,
+          entry.user_emotion || null,
+          entry.detected_emotion || null,
+          entry.detected_distortion || null,
+          entry.confidence_score ?? null,
+          entry.risk_score ?? null,
+          entry.flag_riesgo_suicida ? 1 : 0,
+          entry.owner_uid,
+        ]
+      );
+
+      DiaryDebugService.info('sqlite.save.completed', {
+        clientId: entry.id || null,
+        localId: result.lastInsertRowId,
+        synced: false,
+      });
+
+      return result.lastInsertRowId;
+    } catch (error) {
+      DiaryDebugService.error(
+        'sqlite.save.failed',
+        error,
+        { clientId: entry.id || null }
+      );
+
+      throw error;
+    }
   },
 
   async markAsSynced(localId, remoteId, ownerUid) {
     requireOwner(ownerUid);
 
     if (remoteId === undefined || remoteId === null) {
-      throw new Error('No se puede sincronizar sin el ID remoto del pensamiento.');
+      throw new Error(
+        'No se puede sincronizar sin el ID remoto del pensamiento.'
+      );
     }
 
     const database = await getDb();
 
-    await database.runAsync(
+    const result = await database.runAsync(
       `UPDATE diary_entries
        SET synced = 1, remote_id = ?
        WHERE id = ? AND owner_uid = ?;`,
       [Number(remoteId), Number(localId), ownerUid]
     );
+
+    DiaryDebugService.info('sqlite.sync.confirmed', {
+      localId: Number(localId),
+      remoteId: Number(remoteId),
+      rowsAffected: result.changes,
+    });
   },
 
   async getUnsyncedEntries(ownerUid) {
@@ -142,13 +180,19 @@ export const DatabaseService = {
 
     const database = await getDb();
 
-    return database.getAllAsync(
+    const entries = await database.getAllAsync(
       `SELECT *
        FROM diary_entries
        WHERE owner_uid = ? AND synced = 0
        ORDER BY created_at ASC;`,
       [ownerUid]
     );
+
+    DiaryDebugService.info('sqlite.pending.loaded', {
+      count: entries.length,
+    });
+
+    return entries;
   },
 
   async getAllEntries(ownerUid) {
@@ -183,7 +227,9 @@ export const DatabaseService = {
     requireOwner(ownerUid);
 
     if (!Array.isArray(entries)) {
-      throw new Error('La respuesta del servidor no contiene una lista de pensamientos.');
+      throw new Error(
+        'La respuesta del servidor no contiene una lista de pensamientos.'
+      );
     }
 
     const database = await getDb();
@@ -258,9 +304,10 @@ export const DatabaseService = {
       }
     }
 
-    console.log(
-      `🔄 Importación terminada: ${imported} nuevos, ${updated} actualizados`
-    );
+    DiaryDebugService.info('sqlite.remote_import.completed', {
+      imported,
+      updated,
+    });
 
     return { imported, updated };
   },

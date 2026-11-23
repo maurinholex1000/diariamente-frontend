@@ -17,6 +17,7 @@ import { useDispatch } from 'react-redux';
 import { addEntry } from '../../store/actions';
 import { ApiService } from '../../services/ApiService';
 import { useAuth } from '../../context/AuthContext';
+import { DiaryDebugService } from '../../services/DiaryDebugService';
 
 const EMOTIONS = [
   'Alegría',
@@ -71,67 +72,78 @@ export const DiaryEntryScreen = ({ navigation }) => {
 
   // Guardar pensamiento asociado al usuario autenticado.
   const handleSave = async () => {
-    if (!belief || belief.trim().length < 3) {
-      Alert.alert(
-        'Error',
-        'El pensamiento automático es obligatorio'
-      );
-      return;
-    }
+  if (!belief || belief.trim().length < 3) {
+    Alert.alert(
+      'Error',
+      'El pensamiento automático es obligatorio'
+    );
+    return;
+  }
 
-    if (!user?.uid) {
-      Alert.alert(
-        'Error',
-        'No se pudo identificar al usuario autenticado. Volvé a iniciar sesión.'
-      );
-      return;
-    }
+  if (!user?.uid) {
+    Alert.alert(
+      'Error',
+      'No se pudo identificar al usuario autenticado. Volvé a iniciar sesión.'
+    );
+    return;
+  }
 
-    setLoading(true);
+  setLoading(true);
 
-    try {
-      const entry = {
-        id: Date.now().toString(),
+  const clientId = Date.now().toString();
 
-        // UID de Firebase: identifica al propietario del pensamiento.
-        owner_uid: user.uid,
+  DiaryDebugService.info('entry.save.started', {
+    clientId,
+  });
 
-        antecedent: antecedent.trim(),
-        belief: belief.trim(),
-        consequence: consequence.trim(),
-        user_emotion: userEmotion,
+  try {
+    const entry = {
+      id: clientId,
+      owner_uid: user.uid,
 
-        detected_emotion: aiResult?.emotion ?? null,
-        detected_distortion: aiResult?.distortion ?? null,
-        confidence_score: aiResult?.emotion_confidence ?? null,
-        risk_score: aiResult?.risk_score ?? null,
-        flag_riesgo_suicida: aiResult?.flag_riesgo_suicida ?? false,
-      };
+      antecedent: antecedent.trim(),
+      belief: belief.trim(),
+      consequence: consequence.trim(),
+      user_emotion: userEmotion,
 
-      // El middleware se encarga de SQLite y de la sincronización.
-      await dispatch(addEntry(entry));
+      detected_emotion: aiResult?.emotion ?? null,
+      detected_distortion: aiResult?.distortion ?? null,
+      confidence_score: aiResult?.emotion_confidence ?? null,
+      risk_score: aiResult?.risk_score ?? null,
+      flag_riesgo_suicida: aiResult?.flag_riesgo_suicida ?? false,
+    };
 
-      Alert.alert(
-        '✅ Guardado',
-        'Tu pensamiento se registró correctamente',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]
-      );
-    } catch (error) {
-      console.error('Error guardando pensamiento:', error);
+    await dispatch(addEntry(entry));
 
-      Alert.alert(
-        'Error',
-        'No se pudo guardar el pensamiento. Intentá nuevamente.'
-      );
-    } finally {
-      setLoading(false);
-    }
-  };
+    DiaryDebugService.info('entry.save.dispatch.completed', {
+      clientId,
+    });
+
+    Alert.alert(
+      '✅ Guardado',
+      'Tu pensamiento se registró correctamente',
+      [
+        {
+          text: 'OK',
+          onPress: () => navigation.goBack(),
+        },
+      ]
+    );
+  } catch (error) {
+    DiaryDebugService.error(
+      'entry.save.failed',
+      error,
+      { clientId }
+    );
+
+    Alert.alert(
+      'Error',
+      'No se pudo guardar el pensamiento. Intentá nuevamente.'
+    );
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <ScrollView style={styles.container}>
