@@ -1,234 +1,162 @@
 
 import { actionTypes } from '../actions';
 import { DatabaseService } from '../../services/DatabaseService';
-import { ApiService } from '../../services/ApiService';
-import { StorageService } from '../../services/StorageService';
+import { DiaryDebugService } from '../../services/DiaryDebugService';
 import { auth } from '../../config/firebase';
 
-let isProcessing = false;
-
-async function processAction(action, ownerUid) {
-  if (action.type !== actionTypes.ADD_ENTRY) {
-    return null;
-  }
-
-  if (!ownerUid || auth.currentUser?.uid !== ownerUid) {
-    throw new Error('El usuario autenticado no coincide con el propietario.');
-  }
-
-  // owner_uid es un dato local: no se necesita enviar al backend.
-  const {
-    owner_uid,
-    ...entryForApi
-  } = action.payload;
-
-  if (owner_uid !== ownerUid) {
-    throw new Error('El pensamiento pertenece a otra cuenta.');
-  }
-
-  return await ApiService.saveDiaryEntry(entryForApi);
+function isValidOwner(ownerUid) {
+  return (
+    typeof ownerUid === 'string' &&
+    ownerUid.trim().length > 0
+  );
 }
 
 export const offlineMiddleware = (store) => (next) => async (action) => {
+  /*
+   * Solo intervenimos en acciones marcadas para persistencia offline.
+   * Las demás acciones siguen su flujo normal de Redux.
+   */
   if (!action.meta?.offline) {
     return next(action);
   }
 
-  const ownerUid = action.payload?.owner_uid;
+  const entry = action.payload;
+  const ownerUid = entry?.owner_uid;
 
-  if (!ownerUid || auth.currentUser?.uid !== ownerUid) {
-    console.error('❌ UID inválido al guardar pensamiento.');
-    throw new Error('No se pudo verificar el propietario del pensamiento.');
-  }
-
-  const state = store.getState();
-  const isOffline = state.connection.isOffline;
-
-  // Siempre guardar primero en SQLite.
-  const localId = await DatabaseService.saveEntryLocally({
-    ...action.payload,
-    synced: false,
+  DiaryDebugService.info('offline.middleware.action_received', {
+    actionType: action.type,
+    clientId: entry?.id || null,
+    ownerUid: ownerUid || null,
   });
 
-  console.log('💾 Pensamiento guardado en SQLite:', localId);
-
-  const queuedAction = {
-    id: action.payload.id || Date.now().toString(),
-    localId,
-    owner_uid: ownerUid,
-    action,
-    timestamp: new Date().toISOString(),
-    retries: 0,
-  };
-
-  // Sin conexión: guardar en la cola persistente.
-  if (isOffline) {
-    await StorageService.addToOfflineQueue(queuedAction);
-    return next(action);
-  }
-
-  // Con conexión: intentar enviar inmediatamente.
-  try {
-    const result = await processAction(action, ownerUid);
-
-    if (!result?.id) {
-      throw new Error('El servidor no devolvió el ID del pensamiento.');
-    }
-
-    await DatabaseService.markAsSynced(
-      localId,
-      result.id,
-      ownerUid
+  /*
+   * Validación inicial de identidad.
+   */
+  if (
+    !isValidOwner(ownerUid) ||
+    auth.currentUser?.uid !== ownerUid
+  ) {
+    const error = new Error(
+      'No se pudo verificar el propietario del pensamiento.'
     );
 
-    console.log(
-      '✅ Pensamiento sincronizado:',
-      localId,
-      '->',
-      result.id
+    DiaryDebugService.error(
+      'offline.middleware.invalid_owner',
+      error,
+      {
+        ownerUid: ownerUid || null,
+        currentOwnerUid: auth.currentUser?.uid || null,
+      }
     );
 
-    return next({
-      type: actionTypes.ADD_ENTRY_SUCCESS,
-      payload: {
-        ...action.payload,
-        ...result,
-        localId,
-        synced: true,
-      },
-    });
-  } catch (error) {
-    console.log(
-      '⚠️ Error enviando pensamiento. Se conservará en la cola:',
-      error.message
-    );
-
-    await StorageService.addToOfflineQueue(queuedAction);
-
-    return next({
+    next({
       type: actionTypes.ADD_ENTRY_FAILURE,
       payload: {
-        id: queuedAction.id,
-        localId,
+        id: entry?.id || null,
         error: error.message,
       },
     });
-  }
-};
 
-export const processOfflineQueue = async (store, ownerUid) => {
-  if (isProcessing || !ownerUid) return;
-
-  if (auth.currentUser?.uid !== ownerUid) {
-    console.warn('⚠️ Se canceló la cola: el usuario cambió.');
-    return;
+    throw error;
   }
 
-  isProcessing = true;
+  let savedEntry;
 
+  /*
+   * Guardamos el pensamiento y creamos su operación Outbox
+   * dentro de una misma transacción SQLite.
+   *
+   * Si esta operación falla, no se considera guardado.
+   */
   try {
-    const state = store.getState();
+    savedEntry = await DatabaseService.saveEntryWithOutbox({
+      ...entry,
+      owner_uid: ownerUid,
+    });
 
-    if (state.connection.isOffline) return;
+    DiaryDebugService.info('offline.middleware.local_save_completed', {
+      ownerUid,
+      localId: savedEntry.localId,
+      clientEntryId: savedEntry.clientEntryId,
+      outboxId: savedEntry.outboxId,
+    });
 
-    const queue = await StorageService.getOfflineQueue();
-
-    // Solo procesar elementos que pertenezcan a la cuenta actual.
-    // Los registros antiguos sin UID permanecen intactos.
-    const userQueue = queue.filter(
-      (item) => item.owner_uid === ownerUid
+    console.log(
+      '💾 Pensamiento guardado localmente:',
+      savedEntry.localId
+    );
+  } catch (error) {
+    DiaryDebugService.error(
+      'offline.middleware.local_save_failed',
+      error,
+      {
+        ownerUid,
+        clientId: entry?.id || null,
+      }
     );
 
-    for (const queuedAction of userQueue) {
-      // Comprobar nuevamente antes de cada envío.
-      if (auth.currentUser?.uid !== ownerUid) {
-        console.warn('⚠️ Se detuvo la cola porque cambió el usuario.');
-        break;
-      }
+    next({
+      type: actionTypes.ADD_ENTRY_FAILURE,
+      payload: {
+        id: entry?.id || null,
+        error: error?.message || 'No se pudo guardar el pensamiento.',
+      },
+    });
 
-      try {
-        // Consultar el registro local antes de enviarlo.
-        const localEntry = await DatabaseService.getEntryById(
-          queuedAction.localId,
-          ownerUid
-        );
-
-        if (!localEntry) {
-          console.warn(
-            '⚠️ No se encontró el pensamiento local:',
-            queuedAction.localId
-          );
-          continue;
-        }
-
-        // Si ya se sincronizó, retirar la cola sin volver a enviarlo.
-        if (localEntry.synced === 1 && localEntry.remote_id) {
-          await StorageService.removeFromOfflineQueue(
-            queuedAction.id
-          );
-          continue;
-        }
-
-        const result = await processAction(
-          queuedAction.action,
-          ownerUid
-        );
-
-        if (!result?.id) {
-          throw new Error('El servidor no devolvió el ID del pensamiento.');
-        }
-
-        // Primero actualizar SQLite y después quitarlo de la cola.
-        await DatabaseService.markAsSynced(
-          queuedAction.localId,
-          result.id,
-          ownerUid
-        );
-
-        await StorageService.removeFromOfflineQueue(
-          queuedAction.id
-        );
-
-        store.dispatch({
-          type: actionTypes.ADD_ENTRY_SUCCESS,
-          payload: {
-            ...queuedAction.action.payload,
-            ...result,
-            localId: queuedAction.localId,
-            offlineId: queuedAction.id,
-            synced: true,
-          },
-        });
-
-        console.log(
-          '✅ Pensamiento pendiente sincronizado:',
-          queuedAction.localId,
-          '->',
-          result.id
-        );
-      } catch (error) {
-        console.error(
-          '❌ Error procesando pensamiento pendiente:',
-          queuedAction.localId,
-          error.message
-        );
-
-        const updatedQueueItem = {
-          ...queuedAction,
-          retries: (queuedAction.retries || 0) + 1,
-          lastError: error.message,
-          lastAttempt: new Date().toISOString(),
-        };
-
-        // No eliminar el pensamiento después de cinco intentos.
-        await StorageService.updateOfflineQueueItem(
-          updatedQueueItem
-        );
-      }
-    }
-  } catch (error) {
-    console.error('Error procesando cola offline:', error);
-  } finally {
-    isProcessing = false;
+    throw error;
   }
+
+  /*
+   * La operación SQLite ya terminó correctamente.
+   *
+   * Si el usuario cambió de cuenta durante el guardado, no
+   * despachamos el pensamiento al Redux de la nueva sesión.
+   *
+   * El registro permanece conservado bajo el owner_uid original
+   * y podrá recuperarse cuando esa cuenta vuelva a iniciar sesión.
+   */
+  if (auth.currentUser?.uid !== ownerUid) {
+    DiaryDebugService.warn(
+      'offline.middleware.owner_changed_after_save',
+      {
+        savedOwnerUid: ownerUid,
+        currentOwnerUid: auth.currentUser?.uid || null,
+        localId: savedEntry.localId,
+      }
+    );
+
+    return {
+      saved: true,
+      ownerChanged: true,
+      localId: savedEntry.localId,
+      clientEntryId: savedEntry.clientEntryId,
+    };
+  }
+
+  /*
+   * El pensamiento se guardó correctamente.
+   *
+   * No se envía al backend desde este middleware.
+   * SyncService procesará la Outbox cuando corresponda.
+   */
+  const successAction = {
+    type: actionTypes.ADD_ENTRY_SUCCESS,
+    payload: {
+      ...entry,
+      localId: savedEntry.localId,
+      client_entry_id: savedEntry.clientEntryId,
+      outboxId: savedEntry.outboxId,
+      owner_uid: ownerUid,
+      synced: false,
+    },
+  };
+
+  DiaryDebugService.info('offline.middleware.success_dispatched', {
+    ownerUid,
+    localId: savedEntry.localId,
+    clientEntryId: savedEntry.clientEntryId,
+    outboxId: savedEntry.outboxId,
+  });
+
+  return next(successAction);
 };

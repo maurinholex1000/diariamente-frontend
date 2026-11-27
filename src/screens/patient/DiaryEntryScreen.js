@@ -16,6 +16,7 @@ import { useDispatch } from 'react-redux';
 
 import { addEntry } from '../../store/actions';
 import { ApiService } from '../../services/ApiService';
+import { syncService } from '../../services/SyncService';
 import { useAuth } from '../../context/AuthContext';
 import { DiaryDebugService } from '../../services/DiaryDebugService';
 
@@ -59,7 +60,10 @@ export const DiaryEntryScreen = ({ navigation }) => {
       const result = await ApiService.analyzeText(belief.trim());
       setAiResult(result);
     } catch (error) {
-      console.error('Error analizando pensamiento:', error);
+      DiaryDebugService.error(
+        'entry.analysis.failed',
+        error
+      );
 
       Alert.alert(
         'Error',
@@ -72,78 +76,93 @@ export const DiaryEntryScreen = ({ navigation }) => {
 
   // Guardar pensamiento asociado al usuario autenticado.
   const handleSave = async () => {
-  if (!belief || belief.trim().length < 3) {
-    Alert.alert(
-      'Error',
-      'El pensamiento automático es obligatorio'
-    );
-    return;
-  }
+    if (!belief || belief.trim().length < 3) {
+      Alert.alert(
+        'Error',
+        'El pensamiento automático es obligatorio'
+      );
+      return;
+    }
 
-  if (!user?.uid) {
-    Alert.alert(
-      'Error',
-      'No se pudo identificar al usuario autenticado. Volvé a iniciar sesión.'
-    );
-    return;
-  }
+    if (!user?.uid) {
+      Alert.alert(
+        'Error',
+        'No se pudo identificar al usuario autenticado. Volvé a iniciar sesión.'
+      );
+      return;
+    }
 
-  setLoading(true);
+    setLoading(true);
 
-  const clientId = Date.now().toString();
+    const clientId = Date.now().toString();
 
-  DiaryDebugService.info('entry.save.started', {
-    clientId,
-  });
-
-  try {
-    const entry = {
-      id: clientId,
-      owner_uid: user.uid,
-
-      antecedent: antecedent.trim(),
-      belief: belief.trim(),
-      consequence: consequence.trim(),
-      user_emotion: userEmotion,
-
-      detected_emotion: aiResult?.emotion ?? null,
-      detected_distortion: aiResult?.distortion ?? null,
-      confidence_score: aiResult?.emotion_confidence ?? null,
-      risk_score: aiResult?.risk_score ?? null,
-      flag_riesgo_suicida: aiResult?.flag_riesgo_suicida ?? false,
-    };
-
-    await dispatch(addEntry(entry));
-
-    DiaryDebugService.info('entry.save.dispatch.completed', {
+    DiaryDebugService.info('entry.save.started', {
       clientId,
     });
 
-    Alert.alert(
-      '✅ Guardado',
-      'Tu pensamiento se registró correctamente',
-      [
-        {
-          text: 'OK',
-          onPress: () => navigation.goBack(),
-        },
-      ]
-    );
-  } catch (error) {
-    DiaryDebugService.error(
-      'entry.save.failed',
-      error,
-      { clientId }
-    );
+    try {
+      const entry = {
+        id: clientId,
+        owner_uid: user.uid,
 
-    Alert.alert(
-      'Error',
-      'No se pudo guardar el pensamiento. Intentá nuevamente.'
-    );
-  } finally {
-    setLoading(false);
-  }
-};
+        antecedent: antecedent.trim(),
+        belief: belief.trim(),
+        consequence: consequence.trim(),
+        user_emotion: userEmotion,
+
+        detected_emotion: aiResult?.emotion ?? null,
+        detected_distortion: aiResult?.distortion ?? null,
+        confidence_score: aiResult?.emotion_confidence ?? null,
+        risk_score: aiResult?.risk_score ?? null,
+        flag_riesgo_suicida: aiResult?.flag_riesgo_suicida ?? false,
+      };
+
+      // Primero se guarda localmente en SQLite y se registra
+      // la operación pendiente en la Outbox mediante el middleware.
+      await dispatch(addEntry(entry));
+
+      DiaryDebugService.info('entry.save.dispatch.completed', {
+        clientId,
+      });
+
+      // Solicitar sincronización inmediata.
+      // El guardado local ya está confirmado: un fallo de sincronización
+      // no debe impedir que el usuario conserve su pensamiento.
+      syncService.forceSync().catch((error) => {
+        DiaryDebugService.warn(
+          'entry.save.sync_trigger_failed',
+          {
+            clientId,
+            message: error?.message || 'Error desconocido',
+          }
+        );
+      });
+
+      Alert.alert(
+        '✅ Guardado',
+        'Tu pensamiento se registró correctamente',
+        [
+          {
+            text: 'OK',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    } catch (error) {
+      DiaryDebugService.error(
+        'entry.save.failed',
+        error,
+        { clientId }
+      );
+
+      Alert.alert(
+        'Error',
+        'No se pudo guardar el pensamiento. Intentá nuevamente.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>
